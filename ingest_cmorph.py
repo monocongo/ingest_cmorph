@@ -1,13 +1,16 @@
 import argparse
+import calendar
 from datetime import datetime
 import ftplib
+import gzip
 import logging
 import netCDF4
 import numpy as np
 import os
-import urllib
+import shutil
+import tarfile
+import urllib.request
 import warnings
-import calendar
 
 #-----------------------------------------------------------------------------------------------------------------------
 # set up a basic, global _logger which will write to the console as standard error
@@ -93,8 +96,8 @@ def _download_daily_files(destination_dir,
     :param year:
     :param month: 1 == January, ..., 12 == December   
     """
-    
-    #TODO try using urllib.request.urlretrieve() instead of ftplib
+
+    # determine which set of days per month we'll use based on if leap year or not    
     if calendar.isleap(year):
         days_in_month = _MONTH_DAYS_LEAP
     else:
@@ -108,30 +111,28 @@ def _download_daily_files(destination_dir,
     files = []
     
     for day in range(days_in_month[month - 1]):
-        file_name = 'CMORPH_V1.0_RAW_0.25deg-DLY_00Z_' + year_month + str(day + 1).zfill(2) + '.gz' 
-        file_url  = url_base + '/' + file_name
-        local_filename = destination_dir + '/' + file_name
-        urllib.request.urlretrieve(file_url, local_filename)
-        files.append(local_filename)
+        
+        # build the file name, URL, and local file name
+        filename_unzipped = 'CMORPH_V1.0_RAW_0.25deg-DLY_00Z_' + year_month + str(day + 1).zfill(2)
+        filename_zipped = filename_unzipped + '.gz' 
+        
+        file_url  = url_base + '/' + filename_zipped
+        local_filename_zipped = destination_dir + '/' + filename_zipped
+        local_filename_unzipped = destination_dir + '/' + filename_unzipped
+        
+        # download the zipped file
+        urllib.request.urlretrieve(file_url, local_filename_zipped)
 
-#     # read the listing of directories from the list of raw data years, these should all be 4-digit years
-#     with ftplib.FTP() as ftp:
-# 
-#         ftp.connect('ftp://filsrv.cicsnc.org/')
-#         ftp.login('anonymous')
-#         ftp.cwd('olivier/data_CMORPH_NIDIS/02_RAW/%s/%s%s' % year, year, str(month).zfill(2))
-#         ls = ftp.mlsd()
-#     
-#         files = []
-#         for items in ls:
-#             if item['type'] == 'file':
-#                 local_filename = os.sep.join((destination_dir, item['name']))
-#                 with open(local_filename, 'wb') as f:
-#                     ftp.retrbinary('RETR %s' % filename, f.write)            
-#                 files.append(local_filename)
-# 
-#         ftp.quit()
-#         
+        # decompress the zipped file
+        with gzip.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
+            shutil.copyfileobj(f_in, f_out)
+  
+        # append to our list of data files
+        files.append(local_filename_unzipped)
+        
+        # clean up the downloaded zip file
+        os.remove(local_filename_zipped)
+        
     return files
 
 #-----------------------------------------------------------------------------------------------------------------------
@@ -255,10 +256,10 @@ def ingest_cmorph_to_netcdf_full(cmorph_dir,
                 # get the files for the month
                 if download_files:
                     downloaded_files = _download_daily_files(cmorph_dir, year, month)
-                                    
+                       
                 # read all the data for the month as a sum from the daily values, assign into the appropriate slice of the variable
                 data = _read_daily_cmorph_to_monthly_sum(cmorph_dir, data_desc, year, month)
-                time_index = (year * 12) + month - 1
+                time_index = ((year - data_desc['start_date'].year) * 12) + month - 1
                 data_variable[time_index, :, :] = np.reshape(data, (1, data_desc['xdef_count'], data_desc['ydef_count']))
         
                 # clean up, if necessary

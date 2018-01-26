@@ -120,6 +120,8 @@ def _download_daily_files(destination_dir,
         local_filename_zipped = destination_dir + '/' + filename_zipped
         local_filename_unzipped = destination_dir + '/' + filename_unzipped
         
+        _logger.info('Downloading %s' % file_url)
+        
         # download the zipped file
         urllib.request.urlretrieve(file_url, local_filename_zipped)
 

@@ -10,6 +10,7 @@ import os
 import shutil
 import urllib.request
 import warnings
+import bz2
 
 #-----------------------------------------------------------------------------------------------------------------------
 # set up a basic, global _logger which will write to the console as standard error
@@ -113,7 +114,10 @@ def _download_daily_files(destination_dir,
         
         # build the file name, URL, and local file name
         filename_unzipped = 'CMORPH_V1.0_RAW_0.25deg-DLY_00Z_' + year_month + str(day + 1).zfill(2)
-        filename_zipped = filename_unzipped + '.gz' 
+        zip_extension = '.gz'
+        if year >= 2004:
+            zip_extension = '.bz2'
+        filename_zipped = filename_unzipped + zip_extension
         
         file_url  = url_base + '/' + filename_zipped
         local_filename_zipped = destination_dir + '/' + filename_zipped
@@ -125,8 +129,12 @@ def _download_daily_files(destination_dir,
         urllib.request.urlretrieve(file_url, local_filename_zipped)
 
         # decompress the zipped file
-        with gzip.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
-            shutil.copyfileobj(f_in, f_out)
+        if year >= 2004:
+            with bz2.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        else:
+            with gzip.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
   
         # append to our list of data files
         files.append(local_filename_unzipped)

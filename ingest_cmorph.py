@@ -1,14 +1,13 @@
 import argparse
 import calendar
 from datetime import datetime
-import ftplib
+# import ftplib
 import gzip
 import logging
 import netCDF4
 import numpy as np
 import os
 import shutil
-import tarfile
 import urllib.request
 import warnings
 
@@ -39,8 +38,8 @@ def _read_daily_cmorph_to_monthly_sum(cmorph_dir,
     for cmorph_file in os.listdir(cmorph_dir):
         
         # read the year and month from the file name, make sure they all match
-        file_year = cmorph_file[-8:-4]
-        file_month = cmorph_file[-4:-2]
+        file_year = int(cmorph_file[-8:-4])
+        file_month = int(cmorph_file[-4:-2])
         if file_year != data_year:
             continue
         elif file_month != data_month:

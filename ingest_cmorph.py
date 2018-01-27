@@ -130,9 +130,11 @@ def _download_daily_files(destination_dir,
 
         # decompress the zipped file
         if year >= 2004:
+            # use BZ2 decompression for files after 2003
             with bz2.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
         else:
+            # use BZ2 decompression for files before 2004
             with gzip.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
   

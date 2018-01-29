@@ -270,8 +270,15 @@ def ingest_cmorph_to_netcdf_full(cmorph_dir,
                        
                 # read all the data for the month as a sum from the daily values, assign into the appropriate slice of the variable
                 data = _read_daily_cmorph_to_monthly_sum(cmorph_dir, data_desc, year, month)
+                
+                #FIXME  EXPERIMENTAL
+                # assume values are in lat/lon orientation
+                np.reshape(data, (1, data_desc['ydef_count'], data_desc['xdef_count']))
+#                 # assume values are in lon/lat orientation
+#                 np.reshape(data, (1, data_desc['xdef_count'], data_desc['ydef_count']))
+                
                 time_index = ((year - data_desc['start_date'].year) * 12) + month - 1
-                data_variable[time_index, :, :] = np.reshape(data, (1, data_desc['xdef_count'], data_desc['ydef_count']))
+                data_variable[time_index, :, :] = data
         
                 # clean up, if necessary
                 if download_files and remove_files:

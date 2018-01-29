@@ -123,7 +123,7 @@ def _download_daily_files(destination_dir,
         local_filename_zipped = destination_dir + '/' + filename_zipped
         local_filename_unzipped = destination_dir + '/' + filename_unzipped
         
-        _logger.info('Downloading %s' % file_url)
+        _logger.info('Downloading %s', file_url)
         
         # download the zipped file
         urllib.request.urlretrieve(file_url, local_filename_zipped)
@@ -253,7 +253,7 @@ def ingest_cmorph_to_netcdf_full(cmorph_dir,
         # read the variable data from the CMORPH file, mask and reshape accordingly, and then assign into the variable
         data_variable = output_dataset.createVariable('prcp', 
                                                       'f8', 
-                                                      ('time', 'lon', 'lat',), 
+                                                      ('time', 'lat', 'lon',), 
                                                       fill_value=data_desc['undef'])
         data_variable.units = 'mm'
         data_variable.standard_name = 'precipitation'
@@ -271,13 +271,13 @@ def ingest_cmorph_to_netcdf_full(cmorph_dir,
                 # read all the data for the month as a sum from the daily values, assign into the appropriate slice of the variable
                 data = _read_daily_cmorph_to_monthly_sum(cmorph_dir, data_desc, year, month)
                 
-                #FIXME  EXPERIMENTAL
                 # assume values are in lat/lon orientation
-                np.reshape(data, (1, data_desc['ydef_count'], data_desc['xdef_count']))
-#                 # assume values are in lon/lat orientation
-#                 np.reshape(data, (1, data_desc['xdef_count'], data_desc['ydef_count']))
-                
+                data = np.reshape(data, (1, data_desc['ydef_count'], data_desc['xdef_count']))
+
+                # get the time index, which is actually the month's count from the start of the period of record                
                 time_index = ((year - data_desc['start_date'].year) * 12) + month - 1
+                
+                # assign into the appropriate slice for the monthly time step
                 data_variable[time_index, :, :] = data
         
                 # clean up, if necessary

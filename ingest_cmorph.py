@@ -52,8 +52,8 @@ def _read_daily_cmorph_to_monthly_sum(cmorph_dir,
             data = data.byteswap()
         data = np.ma.masked_values(data, data_desc['undef'])
             
-        # replace missing values with unmpy.NaN
-        data[data_desc['undef'] == missing_value] = np.NaN
+        # replace missing values with numpy.NaN
+        data[data == data_desc['undef']] = np.NaN
         
         # add to the summation array
         summed_data += data

@@ -8,6 +8,7 @@ import netCDF4
 import numpy as np
 import os
 import shutil
+import urllib.error
 import urllib.request
 import warnings
 import bz2
@@ -29,14 +30,16 @@ _MONTH_DAYS_NONLEAP = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 _MONTH_DAYS_LEAP = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 #-----------------------------------------------------------------------------------------------------------------------
-def _read_daily_cmorph_to_monthly_sum(cmorph_dir,
+def _read_daily_cmorph_to_monthly_sum(cmorph_files,
+                                      #cmorph_dir,
                                       data_desc,
                                       data_year,
                                       data_month):
     
     # for each file in the data directory read the data and add to the cumulative
     summed_data = np.zeros((data_desc['xdef_count'] * data_desc['ydef_count'], ))
-    for cmorph_file in os.listdir(cmorph_dir):
+    for cmorph_file in cmorph_files:
+#     for cmorph_file in os.listdir(cmorph_dir):
         
         # read the year and month from the file name, make sure they all match
         file_year = int(cmorph_file[-8:-4])
@@ -47,10 +50,11 @@ def _read_daily_cmorph_to_monthly_sum(cmorph_dir,
             continue
 
         # read the daily binary data from file, byte swap if not little endian, and mask the missing/fill values
-        data = np.fromfile(os.sep.join((cmorph_dir, cmorph_file)), 'f')
+        data = np.fromfile(cmorph_file, 'f')
+#         data = np.fromfile(os.sep.join((cmorph_dir, cmorph_file)), 'f')
         if not data_desc['little_endian']:
             data = data.byteswap()
-        data = np.ma.masked_values(data, data_desc['undef'])
+#        data = np.ma.masked_values(data, data_desc['undef'])
             
         # replace missing values with numpy.NaN
         data[data == data_desc['undef']] = np.NaN
@@ -93,11 +97,13 @@ def _download_data_descriptor(data_descriptor_file):
 #-----------------------------------------------------------------------------------------------------------------------
 def _download_daily_files(destination_dir,
                           year, 
-                          month):
+                          month,
+                          raw=True):
     """
     :param destination_dir:
     :param year:
-    :param month: 1 == January, ..., 12 == December   
+    :param month: 1 == January, ..., 12 == December
+    :param raw: raw == False means to ingest the gauge adjusted data     
     """
 
     # determine which set of days per month we'll use based on if leap year or not    
@@ -108,7 +114,12 @@ def _download_daily_files(destination_dir,
         
     # base URL we'll append to to get the individual file URLs
     year_month = str(year) + str(month).zfill(2)
-    url_base = 'ftp://filsrv.cicsnc.org/olivier/data_CMORPH_NIDIS/02_RAW/' + str(year) + '/' + year_month
+    if raw:
+        url_base = 'ftp://filsrv.cicsnc.org/olivier/data_CMORPH_NIDIS/02_RAW/' + str(year) + '/' + year_month
+        filename_base = 'CMORPH_V1.0_RAW_0.25deg-DLY_00Z_'
+    else:
+        url_base = 'ftp://filsrv.cicsnc.org/olivier/data_CMORPH_NIDIS/01_GAUGE_ADJUSTED/' + str(year) + '/' + year_month
+        filename_base = 'CMORPH_V1.0_ADJ_0.25deg-DLY_00Z_'
 
     # list of files we'll return
     files = []
@@ -116,9 +127,9 @@ def _download_daily_files(destination_dir,
     for day in range(days_in_month[month - 1]):
         
         # build the file name, URL, and local file name
-        filename_unzipped = 'CMORPH_V1.0_RAW_0.25deg-DLY_00Z_' + year_month + str(day + 1).zfill(2)
+        filename_unzipped = filename_base + year_month + str(day + 1).zfill(2)
         zip_extension = '.gz'
-        if year >= 2004:
+        if not raw or year >= 2004:   # after 2003 the RAW data uses bz2, all gauge adjusted files use bz2
             zip_extension = '.bz2'
         filename_zipped = filename_unzipped + zip_extension
         
@@ -128,25 +139,31 @@ def _download_daily_files(destination_dir,
         
         _logger.info('Downloading %s', file_url)
         
-        # download the zipped file
-        urllib.request.urlretrieve(file_url, local_filename_zipped)
+        try:
+            # download the zipped file
+            urllib.request.urlretrieve(file_url, local_filename_zipped)
+    
+            # decompress the zipped file
+            if not raw or year >= 2004:
+                # use BZ2 decompression for all gauge adjusted files and RAW files after 2003
+                with bz2.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            else:
+                # use BZ2 decompression for files before 2004
+                with gzip.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+      
+            # append to our list of data files
+            files.append(local_filename_unzipped)
+            
+            # clean up the downloaded zip file
+            os.remove(local_filename_zipped)
+        
+        except urllib.error.URLError:
+        
+            # download failed, move to next
+            continue
 
-        # decompress the zipped file
-        if year >= 2004:
-            # use BZ2 decompression for files after 2003
-            with bz2.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
-                shutil.copyfileobj(f_in, f_out)
-        else:
-            # use BZ2 decompression for files before 2004
-            with gzip.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
-                shutil.copyfileobj(f_in, f_out)
-  
-        # append to our list of data files
-        files.append(local_filename_unzipped)
-        
-        # clean up the downloaded zip file
-        os.remove(local_filename_zipped)
-        
     return files
 
 #-----------------------------------------------------------------------------------------------------------------------
@@ -265,7 +282,8 @@ def ingest_cmorph_to_netcdf_full(cmorph_dir,
                                  netcdf_file,
                                  data_descriptor_file_name='CMORPH_V1.0_RAW_0.25deg-DLY_00Z.ctl',
                                  download_files=False,
-                                 remove_files=False):
+                                 remove_files=False,
+                                 raw=True):
     """
     Ingests CMORPH daily precipitation files into a full period of record file containing monthly cumulative precipitation.
     
@@ -297,24 +315,27 @@ def ingest_cmorph_to_netcdf_full(cmorph_dir,
 
                 # get the files for the month
                 if download_files:
-                    downloaded_files = _download_daily_files(cmorph_dir, year, month)
+                    downloaded_files = _download_daily_files(cmorph_dir, year, month, raw)
                        
-                # read all the data for the month as a sum from the daily values, assign into the appropriate slice of the variable
-                data = _read_daily_cmorph_to_monthly_sum(cmorph_dir, data_desc, year, month)
-                
-                # assume values are in lat/lon orientation
-                data = np.reshape(data, (1, data_desc['ydef_count'], data_desc['xdef_count']))
+                if len(downloaded_files) > 0:
 
-                # get the time index, which is actually the month's count from the start of the period of record                
-                time_index = ((year - data_desc['start_date'].year) * 12) + month - 1
-                
-                # assign into the appropriate slice for the monthly time step
-                data_variable[time_index, :, :] = data
-        
-                # clean up, if necessary
-                if download_files and remove_files:
-                    for file in downloaded_files:
-                        os.remove(file)
+                    # read all the data for the month as a sum from the daily values, assign into the appropriate slice of the variable
+                    data = _read_daily_cmorph_to_monthly_sum(downloaded_files, data_desc, year, month)
+#                     data = _read_daily_cmorph_to_monthly_sum(cmorph_dir, data_desc, year, month)
+                    
+                    # assume values are in lat/lon orientation
+                    data = np.reshape(data, (1, data_desc['ydef_count'], data_desc['xdef_count']))
+    
+                    # get the time index, which is actually the month's count from the start of the period of record                
+                    time_index = ((year - data_desc['start_date'].year) * 12) + month - 1
+                    
+                    # assign into the appropriate slice for the monthly time step
+                    data_variable[time_index, :, :] = data
+            
+                    # clean up, if necessary
+                    if download_files and remove_files:
+                        for file in downloaded_files:
+                            os.remove(file)
                     
 #-----------------------------------------------------------------------------------------------------------------------
 def ingest_cmorph_to_netcdf_monthly(cmorph_dir, 
@@ -489,6 +510,18 @@ if __name__ == '__main__':
                             type=bool,
                             default=False, 
                             required=False)
+#         parser.add_argument("--raw", 
+#                             help="Ingest raw (True) or gauge adjusted (False) data",
+#                             type=bool,
+#                             required=True)
+        feature_parser = parser.add_mutually_exclusive_group(required=False)
+        feature_parser.add_argument('--raw', 
+                                    dest='feature', 
+                                    action='store_true')
+        feature_parser.add_argument('--adjusted', 
+                                    dest='feature', 
+                                    action='store_false')
+        feature_parser.set_defaults(feature=True)
         args = parser.parse_args()
 
         # perform the ingest to NetCDF
@@ -498,7 +531,8 @@ if __name__ == '__main__':
                                      args.out_file,
 #                                      data_descriptor_file_name=args.descriptor_file,
                                      download_files=args.download_files,
-                                     remove_files=args.remove_files)
+                                     remove_files=args.remove_files,
+                                     raw=args.feature)
         # report on the elapsed time
         end_datetime = datetime.now()
         _logger.info("End time:      %s", end_datetime)

@@ -1,4 +1,5 @@
 import argparse
+import bz2
 import calendar
 from datetime import datetime
 # import ftplib
@@ -11,7 +12,9 @@ import shutil
 import urllib.error
 import urllib.request
 import warnings
-import bz2
+
+_DESCRIPTOR_FILE = ''   # Windows laptop
+_DESCRIPTOR_FILE = ''   # Linux shiva
 
 #-----------------------------------------------------------------------------------------------------------------------
 # set up a basic, global _logger which will write to the console as standard error
@@ -31,7 +34,6 @@ _MONTH_DAYS_LEAP = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 #-----------------------------------------------------------------------------------------------------------------------
 def _read_daily_cmorph_to_monthly_sum(cmorph_files,
-                                      #cmorph_dir,
                                       data_desc,
                                       data_year,
                                       data_month):
@@ -39,7 +41,6 @@ def _read_daily_cmorph_to_monthly_sum(cmorph_files,
     # for each file in the data directory read the data and add to the cumulative
     summed_data = np.zeros((data_desc['xdef_count'] * data_desc['ydef_count'], ))
     for cmorph_file in cmorph_files:
-#     for cmorph_file in os.listdir(cmorph_dir):
         
         # read the year and month from the file name, make sure they all match
         file_year = int(cmorph_file[-8:-4])
@@ -51,17 +52,21 @@ def _read_daily_cmorph_to_monthly_sum(cmorph_files,
 
         # read the daily binary data from file, byte swap if not little endian, and mask the missing/fill values
         data = np.fromfile(cmorph_file, 'f')
-#         data = np.fromfile(os.sep.join((cmorph_dir, cmorph_file)), 'f')
         if not data_desc['little_endian']:
             data = data.byteswap()
-#        data = np.ma.masked_values(data, data_desc['undef'])
             
-        # replace missing values with numpy.NaN
-        data[data == data_desc['undef']] = np.NaN
+        # replace missing values with zeros, so when we sum with previous values 
+        # we're not adding anything to the sum where we actually have missing data
+        data[data == data_desc['undef']] = 0.0
         
         # add to the summation array
         summed_data += data
 
+        #TODO add some code here to account for missing values, so we can determine 1) if a pixel contains less 
+        # than four values for the month over the period of record (without at least four then you can't build 
+        # a distribution curve to fit to, and 2) if the pixel contains all missing values. In both cases we should 
+        # set the the pixel as missing, since it shouldn't be assumed to be zero (follow up with Olivier on this point)
+        
     return summed_data
 
 #-----------------------------------------------------------------------------------------------------------------------
@@ -89,10 +94,12 @@ def _get_years():
 #     return years
 
 #-----------------------------------------------------------------------------------------------------------------------
-def _download_data_descriptor(data_descriptor_file):
+def _download_data_descriptor(work_dir):
     
     file_url = "ftp://filsrv.cicsnc.org/olivier/data_CMORPH_NIDIS/03_PGMS/CMORPH_V1.0_RAW_0.25deg-DLY_00Z.ctl"
+    data_descriptor_file = work_dir + '/cmorph_data_descriptor.txt'
     urllib.request.urlretrieve(file_url, data_descriptor_file)
+    return data_descriptor_file
     
 #-----------------------------------------------------------------------------------------------------------------------
 def _download_daily_files(destination_dir,
@@ -100,10 +107,13 @@ def _download_daily_files(destination_dir,
                           month,
                           raw=True):
     """
-    :param destination_dir:
+    Downloads the daily files corresponding to a specific month.
+    
+    :param destination_dir: location where downloaded files will reside
     :param year:
     :param month: 1 == January, ..., 12 == December
-    :param raw: raw == False means to ingest the gauge adjusted data     
+    :param raw: True: ingest raw data files, False: ingest the gauge adjusted data files
+    :return: list of the downloaded files (full paths)
     """
 
     # determine which set of days per month we'll use based on if leap year or not    
@@ -207,32 +217,17 @@ def _compute_days(initial_year,
     return days
 
 #-----------------------------------------------------------------------------------------------------------------------
-def _init_netcdf(cmorph_dir,
-                 netcdf_file,
-                 data_descriptor_file_name='CMORPH_V1.0_RAW_0.25deg-DLY_00Z.ctl',
-                 download_files=False,
-                 remove_files=False):
+def _init_netcdf(netcdf_file,
+                 work_dir):
     """
-    Ingests CMORPH daily precipitation files into a full period of record file containing monthly cumulative precipitation.
+    Initializes the NetCDF that will be written by the ASCII to NetCDF ingest process.
     
-    :param cmorph_dir: work directory where CMORPH files are expected to be located, downloaded files will reside here
-    :param netcdf_file: output NetCDF
-    :param data_descriptor_file_name: file name of the data descriptor file in CMORPH directory
-    :param download_files: if true then download data descriptor and data files from FTP, overwrites files in CMORPH work directory
-    :param remove_files: if files were downloaded then remove them once operations have completed 
+    :param netcdf_file: output NetCDF we're initializing
+    :param work_dir: directory where files file name of the data descriptor file in CMORPH directory
     """
     
-    # download the descriptor file, if required
-    descriptor_file = os.sep.join((cmorph_dir, data_descriptor_file_name))
-    if download_files:
-        _download_data_descriptor(descriptor_file)
-
     # read data description info
-    data_desc = _read_description(descriptor_file)
-    
-    # clean up the file, if required
-    if download_files and remove_files:
-        os.remove(descriptor_file)
+    data_desc = _read_description(work_dir)
     
     # get the years covered
     years = _get_years()
@@ -245,6 +240,7 @@ def _init_netcdf(cmorph_dir,
         output_dataset.createDimension('lon', data_desc['xdef_count'])
         output_dataset.createDimension('lat', data_desc['ydef_count'])
     
+        #TODO provide additional attributes for CF compliance, data discoverability, etc.
         output_dataset.title = data_desc['title']
         
         # create the coordinate variables
@@ -255,8 +251,8 @@ def _init_netcdf(cmorph_dir,
         # set the coordinate variables' attributes
         data_desc['units_since_year'] = 1800
         time_variable.units = 'days since %s-01-01 00:00:00' % data_desc['units_since_year']
-        x_variable.units = 'degrees east'
-        y_variable.units = 'degrees north'
+        x_variable.units = 'degrees_east'
+        y_variable.units = 'degrees_north'
         
         # generate longitude and latitude values, assign these to the NetCDF coordinate variables
         lon_values = list(_frange(data_desc['xdef_start'], data_desc['xdef_start'] + (data_desc['xdef_count'] * data_desc['xdef_increment']), data_desc['xdef_increment']))
@@ -267,7 +263,7 @@ def _init_netcdf(cmorph_dir,
         # read the variable data from the CMORPH file, mask and reshape accordingly, and then assign into the variable
         data_variable = output_dataset.createVariable('prcp', 
                                                       'f8', 
-                                                      ('time', 'lon', 'lat',), 
+                                                      ('time', 'lat', 'lon',), 
                                                       fill_value=np.NaN)
 
         data_variable.units = 'mm'
@@ -278,24 +274,19 @@ def _init_netcdf(cmorph_dir,
     return data_desc
 
 #-----------------------------------------------------------------------------------------------------------------------
-def ingest_cmorph_to_netcdf_full(cmorph_dir,
+def ingest_cmorph_to_netcdf_full(work_dir,
                                  netcdf_file,
-                                 data_descriptor_file_name='CMORPH_V1.0_RAW_0.25deg-DLY_00Z.ctl',
-                                 download_files=False,
-                                 remove_files=False,
                                  raw=True):
     """
     Ingests CMORPH daily precipitation files into a full period of record file containing monthly cumulative precipitation.
     
-    :param cmorph_dir: work directory where CMORPH files are expected to be located, downloaded files will reside here
+    :param work_dir: work directory where downloaded CMORPH files will temporarily reside while being used for ingest
     :param netcdf_file: output NetCDF
-    :param data_descriptor_file_name: file name of the data descriptor file in CMORPH directory
-    :param download_files: if true then download data descriptor and data files from FTP, overwrites files in CMORPH work directory
-    :param remove_files: if files were downloaded then remove them once operations have completed 
+    :param raw: if True then ingest from raw files, otherwise ingest from adjusted/corrected files 
     """
     
     # create/initialize the NetCDF dataset, get back a data descriptor dictionary
-    data_desc = _init_netcdf(cmorph_dir, netcdf_file, data_descriptor_file_name, download_files, remove_files)
+    data_desc = _init_netcdf(netcdf_file, work_dir)
 
     with netCDF4.Dataset(netcdf_file, 'a') as output_dataset:
     
@@ -306,7 +297,7 @@ def ingest_cmorph_to_netcdf_full(cmorph_dir,
                                                             initial_month=data_desc['start_date'].month,
                                                             units_start_year=data_desc['units_since_year'])
         
-        # get handle to variable, for convenience
+        # get a handle to the precipitation variable, for convenience
         data_variable = output_dataset.variables['prcp']
         
         # loop over each year/month, reading binary data from CMORPH files and adding into the NetCDF variable
@@ -314,14 +305,12 @@ def ingest_cmorph_to_netcdf_full(cmorph_dir,
             for month in range(1, 13):
 
                 # get the files for the month
-                if download_files:
-                    downloaded_files = _download_daily_files(cmorph_dir, year, month, raw)
+                downloaded_files = _download_daily_files(work_dir, year, month, raw)
                        
                 if len(downloaded_files) > 0:
 
                     # read all the data for the month as a sum from the daily values, assign into the appropriate slice of the variable
                     data = _read_daily_cmorph_to_monthly_sum(downloaded_files, data_desc, year, month)
-#                     data = _read_daily_cmorph_to_monthly_sum(cmorph_dir, data_desc, year, month)
                     
                     # assume values are in lat/lon orientation
                     data = np.reshape(data, (1, data_desc['ydef_count'], data_desc['xdef_count']))
@@ -332,90 +321,10 @@ def ingest_cmorph_to_netcdf_full(cmorph_dir,
                     # assign into the appropriate slice for the monthly time step
                     data_variable[time_index, :, :] = data
             
-                    # clean up, if necessary
-                    if download_files and remove_files:
-                        for file in downloaded_files:
-                            os.remove(file)
+                    # clean up
+                    for file in downloaded_files:
+                        os.remove(file)
                     
-#-----------------------------------------------------------------------------------------------------------------------
-def ingest_cmorph_to_netcdf_monthly(cmorph_dir, 
-                                    descriptor_file,
-                                    netcdf_file,
-                                    year, 
-                                    month,
-                                    download_files=False,
-                                    remove_files=False):
-    """
-    :param cmorph_dir:
-    :param descriptor_file:
-    :param netcdf_file:
-    :param year:
-    :param month:  
-    :param download_files:    
-    :param remove_files:    
-    """
-    
-    # download (if necessary) and read data description info
-    if download_files:
-        _download_data_descriptor(descriptor_file)
-    data_desc = _read_description(descriptor_file)
-
-    # clean up    
-    if download_files and remove_files:
-        os.remove(descriptor_file)
-
-    # download (if necessary) and read data description info
-    if download_files:
-        daily_files = _download_daily_files(cmorph_dir, year, month)
-
-    # create/initialize the NetCDF dataset, get back a data descriptor dictionary
-    data_desc = _init_netcdf(cmorph_dir, netcdf_file, descriptor_file, download_files, remove_files)
-
-    # clean up, if necessary
-    if download_files and remove_files:
-        for file in daily_files:
-            os.remove(file)
-
-    # create a corresponding NetCDF
-    with netCDF4.Dataset(netcdf_file, 'a') as output_dataset:
-        
-        # compute the time values 
-        start_date = datetime(units_start_year, 1, 1)
-        file_date = datetime(year, month, 1)
-        time_variable[:] = np.array([(file_date - start_date).days])
-        
-        # read and sum the daily values into an array for the month
-        data = _read_daily_cmorph_to_monthly_sum(cmorph_dir, data_desc)
-        output_dataset.variables['prcp'][:] = np.reshape(data, (1, data_desc['xdef_count'], data_desc['ydef_count']))
-        
-#-----------------------------------------------------------------------------------------------------------------------
-def ingest_cmorph_to_netcdf_daily(cmorph_file, 
-                                  descriptor_file,
-                                  netcdf_file,
-                                  download_files=False,
-                                  remove_files=False):
-    
-    # create/initialize the NetCDF dataset, get back a data descriptor dictionary
-    data_desc = _init_netcdf(cmorph_dir, netcdf_file, descriptor_file, download_files, remove_files)
-    
-    # parse date fields from the file name
-    data_date = datetime.strptime(cmorph_file[-8:], '%D%M%Y')  # example: "01011998"
-    
-    # create a corresponding NetCDF
-    with netCDF4.Dataset(netcdf_file, 'a') as output_dataset:
-        
-        # compute the time value 
-        start_date = datetime(units_start_year, 1, 1)
-        time_variable[:] = np.array([(data_date - start_date).days])
-        
-        # read the variable data from the CMORPH file, mask and reshape accordingly, and then assign into the variable
-        data = np.fromfile(cmorph_file, 'f')
-        if not data_desc['little_endian']:
-            data = data.byteswap()
-        data[data == data_desc['undef']] = np.NaN
-#         data = np.ma.masked_values(data, data_desc['undef'])
-        output_dataset.variables['prcp'][:] = np.reshape(data, (1, data_desc['xdef_count'], data_desc['ydef_count']))
-        
 #-----------------------------------------------------------------------------------------------------------------------
 def _frange(start, stop, step):
     i = start
@@ -424,7 +333,7 @@ def _frange(start, stop, step):
         i += step
 
 #-----------------------------------------------------------------------------------------------------------------------
-def _read_description(descriptor_file):
+def _read_description(work_dir):
     """
     Reads a data descriptor file, example below:
     
@@ -443,6 +352,8 @@ def _read_description(descriptor_file):
     :param descriptor_file: ASCII file with data description information
     :return: dictionary of data description keys/values
     """
+    
+    descriptor_file = _download_data_descriptor(work_dir)
     
     data_dict = {}    
     with open(descriptor_file, 'r') as fp:
@@ -470,6 +381,9 @@ def _read_description(descriptor_file):
             elif words[0] == 'TITLE':
                 data_dict['title'] = ' '.join(words[1:])
 
+    # clean up
+    os.remove(descriptor_file)
+
     return data_dict
 
 #-----------------------------------------------------------------------------------------------------------------------
@@ -478,11 +392,12 @@ if __name__ == '__main__':
     This module is used to perform ingest of binary CMORPH datasets to NetCDF.
 
     Example command line usage for reading all daily files for all months into a single NetCDF file with cumulative 
-    monthly precipitation for the full period of record (all months), with all files downloaded from FTP:
+    monthly precipitation for the full period of record (all months), with all files downloaded from FTP and removed 
+    once processing completes, for gauge adjusted data:
     
     $ python -u ingest_cmorph.py --cmorph_dir C:/home/data/cmorph/raw \
                                  --out_file C:/home/data/cmorph_file.nc \
-                                 --download_files True
+                                 --adjusted
                                  
     """
 
@@ -494,26 +409,12 @@ if __name__ == '__main__':
 
         # parse the command line arguments
         parser = argparse.ArgumentParser()
-        parser.add_argument("--cmorph_dir", 
-                            help="Directory containing daily binary CMORPH data files for a single month", 
+        parser.add_argument("--work_dir", 
+                            help="Directory where CMORPH daily files will be downloaded before being ingested to NetCDF", 
                             required=True)
         parser.add_argument("--out_file", 
                             help="NetCDF output file containing variables read from the input data", 
                             required=True)
-        parser.add_argument("--download_files", 
-                            help="Download data from FTP, saving files in the CMORPH data directory specified by --cmorph_dir",
-                            type=bool,
-                            default=False, 
-                            required=False)
-        parser.add_argument("--remove_files", 
-                            help="Remove downloaded data files from the CMORPH data directory if specified by --download_files",
-                            type=bool,
-                            default=False, 
-                            required=False)
-#         parser.add_argument("--raw", 
-#                             help="Ingest raw (True) or gauge adjusted (False) data",
-#                             type=bool,
-#                             required=True)
         feature_parser = parser.add_mutually_exclusive_group(required=False)
         feature_parser.add_argument('--raw', 
                                     dest='feature', 
@@ -525,14 +426,10 @@ if __name__ == '__main__':
         args = parser.parse_args()
 
         # perform the ingest to NetCDF
-#         ingest_cmorph_to_netcdf_daily(args.in_file, args.descriptor_file, args.out_file)
-#         ingest_cmorph_to_netcdf_monthly(args.cmorph_dir, args.descriptor_file, args.out_file, year, month, args.download_files, args.remove_files)
-        ingest_cmorph_to_netcdf_full(args.cmorph_dir,
+        ingest_cmorph_to_netcdf_full(args.work_dir,
                                      args.out_file,
-#                                      data_descriptor_file_name=args.descriptor_file,
-                                     download_files=args.download_files,
-                                     remove_files=args.remove_files,
                                      raw=args.feature)
+
         # report on the elapsed time
         end_datetime = datetime.now()
         _logger.info("End time:      %s", end_datetime)

@@ -13,9 +13,6 @@ import urllib.error
 import urllib.request
 import warnings
 
-_DESCRIPTOR_FILE = ''   # Windows laptop
-_DESCRIPTOR_FILE = ''   # Linux shiva
-
 #-----------------------------------------------------------------------------------------------------------------------
 # set up a basic, global _logger which will write to the console as standard error
 logging.basicConfig(level=logging.INFO,
@@ -62,11 +59,6 @@ def _read_daily_cmorph_to_monthly_sum(cmorph_files,
         # add to the summation array
         summed_data += data
 
-        #TODO add some code here to account for missing values, so we can determine 1) if a pixel contains less 
-        # than four values for the month over the period of record (without at least four then you can't build 
-        # a distribution curve to fit to, and 2) if the pixel contains all missing values. In both cases we should 
-        # set the the pixel as missing, since it shouldn't be assumed to be zero (follow up with Olivier on this point)
-        
     return summed_data
 
 #-----------------------------------------------------------------------------------------------------------------------
@@ -188,8 +180,8 @@ def _compute_days(initial_year,
     :param initial_year: the initial year from which the day values should start, i.e. the first value in the output
                         array will correspond to the number of days between January of this initial year since January 
                         of the units start year
-    :param initial_month: the month within the initial year from which the day values should start, with 1: January, 2: February, etc.
     :param total_months: the total number of monthly increments (time steps measured in days) to be computed
+    :param initial_month: the month within the initial year from which the day values should start, with 1: January, 2: February, etc.
     :param units_start_year: the start year from which the monthly increments are computed, with time steps measured
                              in days since January of this starting year 
     :return: an array of time step increments, measured in days since midnight of January 1st of the units start year
@@ -266,6 +258,7 @@ def _init_netcdf(netcdf_file,
                                                       ('time', 'lat', 'lon',), 
                                                       fill_value=np.NaN)
 
+        # variable attributes
         data_variable.units = 'mm'
         data_variable.standard_name = 'precipitation'
         data_variable.long_name = 'precipitation, monthly cumulative'

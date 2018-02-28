@@ -114,7 +114,7 @@ def _download_daily_files(destination_dir,
     else:
         days_in_month = _MONTH_DAYS_NONLEAP
         
-    # base URL we'll append to to get the individual file URLs
+    # the base URL we'll append to in order to get the individual file URLs
     year_month = str(year) + str(month).zfill(2)
     if raw:
         url_base = 'ftp://filsrv.cicsnc.org/olivier/data_CMORPH_NIDIS/02_RAW/' + str(year) + '/' + year_month
@@ -418,6 +418,13 @@ if __name__ == '__main__':
         feature_parser.set_defaults(feature=True)
         args = parser.parse_args()
 
+        print('\nIngesting CMORPH precipitation dataset')
+        print('Result NetCDF:   %s' % args.out_file)
+        print('Work directory:  %s' % args.cmorph_dir)
+        print('\n\tDownloading files:   %s' % args.download_files)
+        print('\tRemoving files:      %s' % args.remove_files)
+        print('\tObservation type:    %s\n' % args.obs_type)
+        
         # perform the ingest to NetCDF
         ingest_cmorph_to_netcdf_full(args.work_dir,
                                      args.out_file,

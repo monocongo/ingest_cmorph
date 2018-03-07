@@ -10,6 +10,7 @@ import shutil
 import urllib.request
 import warnings
 import bz2
+import glob
 
 #-----------------------------------------------------------------------------------------------------------------------
 # set up a basic, global _logger which will write to the console as standard error
@@ -190,7 +191,8 @@ def ingest_cmorph_to_netcdf(cmorph_dir,
                             netcdf_file,
                             obs_type='raw',
                             download_files=True,
-                            remove_files=True):
+                            remove_files=True,
+                            conus_only=False):
     """
     Ingests CMORPH daily precipitation files into a full period of record file containing daily precipitation values.
     
@@ -202,11 +204,7 @@ def ingest_cmorph_to_netcdf(cmorph_dir,
     """
     
     # read data description info into a dictionary
-    data_desc = _read_description(cmorph_dir)
-    
-    # clean up the file, if required
-    if download_files and remove_files:
-        os.remove(descriptor_file)
+    data_desc = _read_description(cmorph_dir, download_files, remove_files)
     
     # get the range of years covered
     years = _get_years()
@@ -227,22 +225,31 @@ def ingest_cmorph_to_netcdf(cmorph_dir,
         y_variable = output_dataset.createVariable('lat', 'f4', ('lat',))
         
         # set the coordinate variables' attributes
-        units_since_year = 1800
+        units_since_year = 1900
         time_variable.units = 'days since %s-01-01 00:00:00' % units_since_year
         x_variable.units = 'degrees_east'
         y_variable.units = 'degrees_north'
         
-        lkjhlkjh.kjn;
-        
         # compute the time values 
         time_variable[:] = _compute_days(data_desc['start_date'].year,
-                                         len(years) * 366,    # 366 days per year, including a placeholder for Feb 29th 
-                                         initial_month=data_desc['start_date'].month,
+                                         years[-1], 
                                          units_start_year=units_since_year)
         
+        if conus_only:
+            lat_start = 10  #FIXME get the correct index corresponding to 23 degrees north
+            lat_end = 50    #FIXME get the correct index corresponding to 60 degrees north
+            lon_start = 10  #FIXME get the correct index corresponding to -65 degrees east
+            lon_end = 50    #FIXME get the correct index corresponding to -128 degrees east
+        else:
+            lat_start = data_desc['ydef_start']
+            lat_end = data_desc['ydef_start'] + (data_desc['ydef_count'] * data_desc['ydef_increment'])
+            lon_start = data_desc['xdef_start']
+            lon_end = data_desc['xdef_start'] + (data_desc['xdef_count'] * data_desc['xdef_increment'])
+            
+        
         # generate longitude and latitude values, assign these to the NetCDF coordinate variables
-        lon_values = list(_frange(data_desc['xdef_start'], data_desc['xdef_start'] + (data_desc['xdef_count'] * data_desc['xdef_increment']), data_desc['xdef_increment']))
-        lat_values = list(_frange(data_desc['ydef_start'], data_desc['ydef_start'] + (data_desc['ydef_count'] * data_desc['ydef_increment']), data_desc['ydef_increment']))
+        lon_values = list(_frange(lon_start, lon_end, data_desc['xdef_increment']))
+        lat_values = list(_frange(lat_start, lat_end, data_desc['ydef_increment']))
         x_variable[:] = np.array(lon_values, 'f4')
         y_variable[:] = np.array(lat_values, 'f4')
     
@@ -257,28 +264,43 @@ def ingest_cmorph_to_netcdf(cmorph_dir,
         data_variable.description = data_desc['title']
 
         # loop over each year/month, reading binary data from CMORPH files and adding into the NetCDF variable
+        days_index = 0
         for year in years:
             for month in range(1, 13):
 
                 # get the files for the month
                 if download_files:
-                    downloaded_files = _download_daily_files(cmorph_dir, year, month, obs_type)
-                       
-                # read all the data for the month as a sum from the daily values, assign into the appropriate slice of the variable
-                data = _read_daily_cmorph_to_monthly_sum(cmorph_dir, data_desc, year, month)
-                
-                # assume values are in lat/lon orientation
-                data = np.reshape(data, (1, data_desc['ydef_count'], data_desc['xdef_count']))
+                    daily_files = _download_daily_files(cmorph_dir, year, month, obs_type)
+                else:
+                    if obs_type == 'raw':
+                        filename_pattern = cmorph_dir + '/CMORPH_V1.0_RAW_0.25deg-DLY_00Z_*'
+                    else:   # guage adjusted
+                        filename_pattern = cmorph_dir + '/CMORPH_V1.0_ADJ_0.25deg-DLY_00Z_*'
+                        
+                    daily_files = glob.glob(filename_pattern)
 
-                # get the time index, which is actually the month's count from the start of the period of record                
-                time_index = ((year - data_desc['start_date'].year) * 12) + month - 1
-                
-                # assign into the appropriate slice for the monthly time step
-                data_variable[time_index, :, :] = data
+                # loop over each daily file to read the data and assign it into the variable
+                for daily_cmorph_file in daily_files:
+                    
+                    # read the daily binary data from file, and byte swap if not little endian
+                    data = np.fromfile(daily_cmorph_file, 'f')
+                    if not data_desc['little_endian']:
+                        data = data.byteswap()
+            
+                    # convert missing values to NaNs
+                    data[data == float(data_desc['undef'])] = np.NaN
+                    
+                    # assume values are in lat/lon orientation
+                    data = np.reshape(data, (1, data_desc['ydef_count'], data_desc['xdef_count']))
+
+                    # assign into the appropriate slice for the daily time step
+                    data_variable[days_index, :, :] = data
+                    
+                    days_index += 1
         
                 # clean up, if necessary
                 if download_files and remove_files:
-                    for file in downloaded_files:
+                    for file in daily_files:
                         os.remove(file)
                     
 #-----------------------------------------------------------------------------------------------------------------------
@@ -395,22 +417,37 @@ if __name__ == '__main__':
                             choices=['raw', 'adjusted'], 
                             default='raw',
                             required=False)
+        parser.add_argument("--conus_only", 
+                            help="Use only continental US data (-65 through -128 degrees east, 23 through 60 degrees north)",
+                            type=bool,
+                            default=False, 
+                            required=False)
         args = parser.parse_args()
 
+        # display run info
         print('\nIngesting CMORPH precipitation dataset')
         print('Result NetCDF:   %s' % args.out_file)
         print('Work directory:  %s' % args.cmorph_dir)
         print('\n\tDownloading files:   %s' % args.download_files)
-        print('\tRemoving files:      %s' % args.remove_files)
-        print('\tObservation type:    %s\n' % args.obs_type)
+        print('\tRemoving files:        %s' % args.remove_files)
+        print('\tObservation type:      %s\n' % args.obs_type)
+        print('\tContinental US only:   %s\n' % args.conus_only)
+        print('\n\nRunning...')
         
         # perform the ingest to NetCDF
         ingest_cmorph_to_netcdf(args.cmorph_dir,
                                 args.out_file,
                                 obs_type=args.obs_type,
                                 download_files=args.download_files,
-                                remove_files=args.remove_files)
-        
+                                remove_files=args.remove_files,
+                                conus_only=args.conus_only)
+
+        # display the info in case the above info has scrolled past due to output from the ingest process itself
+        print('\n\nSuccessfully completed')
+        print('\nResult NetCDF:   %s' % args.out_file)
+        print('\tObservation type:      %s\n' % args.obs_type)
+        print('\tContinental US only:   %s\n' % args.conus)
+
         # report on the elapsed time
         end_datetime = datetime.now()
         _logger.info("End time:      %s", end_datetime)

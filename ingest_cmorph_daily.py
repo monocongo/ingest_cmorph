@@ -11,6 +11,7 @@ import urllib.request
 import warnings
 import bz2
 import glob
+import bisect
 
 #-----------------------------------------------------------------------------------------------------------------------
 # set up a basic, global _logger which will write to the console as standard error
@@ -27,6 +28,23 @@ warnings.simplefilter('ignore', Warning)
 # days of each calendar month, for non-leap and leap years
 __MONTH_DAYS_NONLEAP = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 __MONTH_DAYS_LEAP = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+#-----------------------------------------------------------------------------------------------------------------------
+def _find_gt(sorted_values, 
+             x):
+    """
+    Convenience function for finding the list index of the first (leftmost) value greater than x in list sorted_values.'
+    
+    :param sorted_values: 
+    :param x:
+    :return: index of the first (leftmost) value greater than x in the sorted_values list
+    :rtype: int
+    """
+    
+    index = bisect.bisect_right(sorted_values, x)
+    if index != len(sorted_values):
+        return index
+    raise ValueError
 
 # #-----------------------------------------------------------------------------------------------------------------------
 # def _read_daily_cmorph_to_monthly_sum(cmorph_dir,
@@ -175,7 +193,7 @@ def _compute_days(year_initial,
         raise ValueError('Invalid year arguments, initial data year is before the units since year, which is verboten')
 
     # total days between Jan. 1st of the initial data year and Dec. 31st of the final data year
-    data_day_start = datetime(year_initial, 1, 1).day
+    data_day_start = datetime(year_initial, 1, 1)
     total_days = (datetime(year_final, 12, 31) - data_day_start).days
     
     # compute an offset from which the day values should begin 
@@ -233,18 +251,25 @@ def ingest_cmorph_to_netcdf(cmorph_dir,
         # compute the time values 
         time_variable[:] = _compute_days(data_desc['start_date'].year,
                                          years[-1], 
-                                         units_start_year=units_since_year)
+                                         year_since=units_since_year)
         
+        lat_start = data_desc['ydef_start']
+        lat_end = data_desc['ydef_start'] + (data_desc['ydef_count'] * data_desc['ydef_increment'])
+        lon_start = data_desc['xdef_start']
+        lon_end = data_desc['xdef_start'] + (data_desc['xdef_count'] * data_desc['xdef_increment'])
+        lat_values = list(_frange(lat_start, lat_end, data_desc['ydef_increment']))
+        lon_values = list(_frange(lon_start, lon_end, data_desc['xdef_increment']))
+
         if conus_only:
-            lat_start = 10  #FIXME get the correct index corresponding to 23 degrees north
-            lat_end = 50    #FIXME get the correct index corresponding to 60 degrees north
-            lon_start = 10  #FIXME get the correct index corresponding to -65 degrees east
-            lon_end = 50    #FIXME get the correct index corresponding to -128 degrees east
-        else:
-            lat_start = data_desc['ydef_start']
-            lat_end = data_desc['ydef_start'] + (data_desc['ydef_count'] * data_desc['ydef_increment'])
-            lon_start = data_desc['xdef_start']
-            lon_end = data_desc['xdef_start'] + (data_desc['xdef_count'] * data_desc['xdef_increment'])
+            # find lat/lon indices corresponding to CONUS bounds
+            lat_start = _find_gt(lat_values, 23.0)
+            lat_end = _find_gt(lat_values, 59.0)
+            lon_start = _find_gt(lon_values, -65.0)
+            lon_end = _find_gt(lon_values, -128.0)
+
+            # get the subset specific to CONUS only            
+            lat_values = lat_values[lat_start : lat_end + 1]
+            lon_values = lon_values[lon_start : lon_end + 1]
             
         
         # generate longitude and latitude values, assign these to the NetCDF coordinate variables
@@ -419,8 +444,7 @@ if __name__ == '__main__':
                             required=False)
         parser.add_argument("--conus_only", 
                             help="Use only continental US data (-65 through -128 degrees east, 23 through 60 degrees north)",
-                            type=bool,
-                            default=False, 
+                            action='store_true', 
                             required=False)
         args = parser.parse_args()
 

@@ -221,7 +221,8 @@ def _compute_days_all_leap(year_initial,
     day_values = np.empty(shape, dtype=int)
     
     # find the initial number of days since the base/units year
-    start_day = (datetime(year_initial, 1, 1) - datetime(year_since, 1, 1)).days
+    time_delta = datetime(year_initial + 1, 1, 1) - datetime(year_since, 1, 1)
+    start_day = time_delta.days
     current_day_value = start_day
     
     for year_number, year in enumerate(range(year_initial, year_final + 1)):

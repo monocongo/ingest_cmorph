@@ -1,6 +1,9 @@
 import argparse
+import bisect
+import bz2
 import calendar
 from datetime import datetime
+from glob import glob
 import gzip
 import logging
 import netCDF4
@@ -9,9 +12,6 @@ import os
 import shutil
 import urllib.request
 import warnings
-import bz2
-import glob
-import bisect
 
 #-----------------------------------------------------------------------------------------------------------------------
 # set up a basic, global _logger which will write to the console as standard error
@@ -33,7 +33,7 @@ __MONTH_DAYS_LEAP = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 def _find_gt(sorted_values, 
              x):
     """
-    Convenience function for finding the list index of the first (leftmost) value greater than x in list sorted_values.'
+    Convenience function for finding the list index of the first (leftmost) value greater than x in list sorted_values.
     
     :param sorted_values: 
     :param x:
@@ -42,6 +42,23 @@ def _find_gt(sorted_values,
     """
     
     index = bisect.bisect_right(sorted_values, x)
+    if index != len(sorted_values):
+        return index
+    raise ValueError
+
+#-----------------------------------------------------------------------------------------------------------------------
+def _find_lt(sorted_values, 
+             x):
+    """
+    Convenience function for finding the list index of the first (leftmost) value greater than x in list sorted_values.
+    
+    :param sorted_values: 
+    :param x:
+    :return: index of the first (leftmost) value greater than x in the sorted_values list
+    :rtype: int
+    """
+    
+    index = bisect.bisect_left(sorted_values, x)
     if index != len(sorted_values):
         return index
     raise ValueError
@@ -171,38 +188,59 @@ def _download_daily_files(destination_dir,
     return files
 
 #-----------------------------------------------------------------------------------------------------------------------
-def _compute_days(year_initial,
-                  year_final,
-                  year_since=1900):
+def _compute_days_all_leap(year_initial,
+                           year_final,
+                           year_since=1900):
     '''
-    Computes the "number of days" equivalent for regular, incremental daily time steps given an initial year.
-    Useful when using "days since <year_since>" as time units within a NetCDF dataset.
-    
+    Computes the "number of days" equivalent for regular, incremental daily time steps given an initial year, 
+    relevant/specific to time coordinates that use a 366 day calendar. Useful when using "days since <year_since>" 
+    as the time units within a NetCDF dataset. The resulting list of days will represent the range of full years,
+    i.e. the length of the list will be (366 * number of years). For array indices corresponding to faux Feb 29th
+    elements (during non-leap years) we duplicate the previous value used for Feb 28th, and the element corresponding 
+    to March 1st will be the actual Feb 28th value plus 1.
+     
     :param year_initial: the initial year from which the day values should start, i.e. the first value in the output
                         array will correspond to the number of days between January 1st of this initial year and January 
                         1st of the units since year
     :param year_final: the final year through which the result values are computed
     :param year_since: the start year from which the day values are incremented, with result time steps measured
                         in days since January 1st of this year 
-    :return: an array of time step increments, measured in days since midnight of January 1st of the units "since year"
+    :return: an array of time step increments, measured in days since midnight of January 1st of the units' "since year"
     :rtype: ndarray of ints 
     '''
     
     # arguments validation
     if year_initial < year_since:
-        raise ValueError('Invalid year arguments, initial data year is before the units since year, which is verboten')
+        raise ValueError('Invalid year arguments, initial data year is before the units since year')
+    elif year_final < year_initial:
+        raise ValueError('Invalid year arguments, final data year is before the initial data year')
 
-    # total days between Jan. 1st of the initial data year and Dec. 31st of the final data year
-    data_day_start = datetime(year_initial, 1, 1)
-    total_days = (datetime(year_final, 12, 31) - data_day_start).days
+    # allocate the array of values we'll populate and return
+    total_years = (year_final - year_initial + 1)
+    shape = ((total_years * 366),)
+    day_values = np.empty(shape, dtype=int)
     
-    # compute an offset from which the day values should begin 
-    units_day_start = datetime(year_since, 1, 1)
-    initial_days_since = (data_day_start - units_day_start).days
+    # find the initial number of days since the base/units year
+    start_day = (datetime(year_initial, 1, 1) - datetime(year_since, 1, 1)).days
+    current_day_value = start_day
     
-    days = np.array(range(initial_days_since, initial_days_since + total_days), dtype=int)
+    for year_number, year in enumerate(range(year_initial, year_final + 1)):
+
+        # values used within inner (day) loop
+        year_start_index = year_number * 366
+        leap_year = calendar.isleap(year)
+
+        for day_of_year in range(366):
+            
+            # use the value of the current day count
+            day_values[year_start_index + day_of_year] = current_day_value
+            
+            # increment the day count for all days, and back it off if it's "Feb 29th" of a non-leap year
+            current_day_value += 1
+            if (day_of_year == 58) and not leap_year:
+                current_day_value -= 1  # back off the increment since we're now at Feb 28th and the next day is a faux Feb 29th which we'll fill with the Feb 28th value for this year 
     
-    return days
+    return day_values
 
 #-----------------------------------------------------------------------------------------------------------------------
 def ingest_cmorph_to_netcdf(cmorph_dir,
@@ -226,63 +264,73 @@ def ingest_cmorph_to_netcdf(cmorph_dir,
     
     # get the range of years covered
     years = _get_years()
+    units_since_year = 1900
+    
+    # get the lat/lon range limits for the full grid
+    lat_start = data_desc['ydef_start']
+    lat_end = data_desc['ydef_start'] + (data_desc['ydef_count'] * data_desc['ydef_increment'])
+    lon_start = data_desc['xdef_start']
+    lon_end = data_desc['xdef_start'] + (data_desc['xdef_count'] * data_desc['xdef_increment'])
+    
+    # generate the full range of lat/lon values
+    lat_values = list(_frange(lat_start, lat_end, data_desc['ydef_increment']))
+    lon_values = list(_frange(lon_start, lon_end, data_desc['xdef_increment']))
+
+    # slice out the CONUS only lat/lon values, if called for
+    if conus_only:
         
+        # find lat/lon indices corresponding to CONUS bounds
+        lat_start = _find_gt(lat_values, 23.0)
+        lat_end = _find_lt(lat_values, 50.0) + 1
+        lon_start = _find_gt(lon_values, 232.0)
+        lon_end = _find_gt(lon_values, 295.0) + 1
+
+        # get the subset of lat/lon values specific to CONUS only            
+        lat_values = lat_values[lat_start : lat_end]
+        lon_values = lon_values[lon_start : lon_end]
+
     # create a corresponding NetCDF
     with netCDF4.Dataset(netcdf_file, 'w') as output_dataset:
         
         # create the time, x, and y dimensions
         output_dataset.createDimension('time', None)
-        output_dataset.createDimension('lon', data_desc['xdef_count'])
-        output_dataset.createDimension('lat', data_desc['ydef_count'])
+        output_dataset.createDimension('lat', len(lat_values))
+        output_dataset.createDimension('lon', len(lon_values))
     
         output_dataset.title = data_desc['title']
         
         # create the coordinate variables
         time_variable = output_dataset.createVariable('time', 'i4', ('time',))
-        x_variable = output_dataset.createVariable('lon', 'f4', ('lon',))
-        y_variable = output_dataset.createVariable('lat', 'f4', ('lat',))
+        lat_variable = output_dataset.createVariable('lat', 'f4', ('lat',))
+        lon_variable = output_dataset.createVariable('lon', 'f4', ('lon',))
         
         # set the coordinate variables' attributes
-        units_since_year = 1900
-        time_variable.units = 'days since %s-01-01 00:00:00' % units_since_year
-        x_variable.units = 'degrees_east'
-        y_variable.units = 'degrees_north'
+        time_variable.units = 'days since {0}-01-01'.format(units_since_year)
+        lat_variable.units = 'degrees_north'
+        lon_variable.units = 'degrees_east'
+        time_variable.long_name = 'days (366 days per year, non-leap years have Feb. 28th duplicated as Feb 29th)'
+        lat_variable.long_name = 'Latitude'
+        lon_variable.long_name = 'Longitude'
+        time_variable.calendar = '366_day'
         
         # compute the time values 
-        time_variable[:] = _compute_days(data_desc['start_date'].year,
-                                         years[-1], 
-                                         year_since=units_since_year)
+        time_variable[:] = _compute_days_all_leap(data_desc['start_date'].year,
+                                                  years[-1], 
+                                                  year_since=units_since_year)
         
-        lat_start = data_desc['ydef_start']
-        lat_end = data_desc['ydef_start'] + (data_desc['ydef_count'] * data_desc['ydef_increment'])
-        lon_start = data_desc['xdef_start']
-        lon_end = data_desc['xdef_start'] + (data_desc['xdef_count'] * data_desc['xdef_increment'])
-        lat_values = list(_frange(lat_start, lat_end, data_desc['ydef_increment']))
-        lon_values = list(_frange(lon_start, lon_end, data_desc['xdef_increment']))
-
-        if conus_only:
-            # find lat/lon indices corresponding to CONUS bounds
-            lat_start = _find_gt(lat_values, 23.0)
-            lat_end = _find_gt(lat_values, 59.0)
-            lon_start = _find_gt(lon_values, -65.0)
-            lon_end = _find_gt(lon_values, -128.0)
-
-            # get the subset specific to CONUS only            
-            lat_values = lat_values[lat_start : lat_end + 1]
-            lon_values = lon_values[lon_start : lon_end + 1]
             
-        
+        # longitude values are in 
         # generate longitude and latitude values, assign these to the NetCDF coordinate variables
-        lon_values = list(_frange(lon_start, lon_end, data_desc['xdef_increment']))
-        lat_values = list(_frange(lat_start, lat_end, data_desc['ydef_increment']))
-        x_variable[:] = np.array(lon_values, 'f4')
-        y_variable[:] = np.array(lat_values, 'f4')
+#         lon_values = list(_frange(lon_start, lon_end, data_desc['xdef_increment']))
+#         lat_values = list(_frange(lat_start, lat_end, data_desc['ydef_increment']))
+        lat_variable[:] = np.array(lat_values, 'f4')
+        lon_variable[:] = np.array(lon_values, 'f4')
     
         # read the variable data from the CMORPH file, mask and reshape accordingly, and then assign into the variable
         data_variable = output_dataset.createVariable('prcp', 
                                                       'f8', 
                                                       ('time', 'lat', 'lon',), 
-                                                      fill_value=data_desc['undef'])
+                                                      fill_value=np.NaN)
         data_variable.units = 'mm'
         data_variable.standard_name = 'precipitation'
         data_variable.long_name = 'precipitation, monthly cumulative'
@@ -297,15 +345,16 @@ def ingest_cmorph_to_netcdf(cmorph_dir,
                 if download_files:
                     daily_files = _download_daily_files(cmorph_dir, year, month, obs_type)
                 else:
+                    suffix = str(year) + str(month).zfill(2) + '*'
                     if obs_type == 'raw':
-                        filename_pattern = cmorph_dir + '/CMORPH_V1.0_RAW_0.25deg-DLY_00Z_*'
-                    else:   # guage adjusted
-                        filename_pattern = cmorph_dir + '/CMORPH_V1.0_ADJ_0.25deg-DLY_00Z_*'
+                        filename_pattern = cmorph_dir + '/CMORPH_V1.0_RAW_0.25deg-DLY_00Z_' + suffix
+                    else:   # gauge adjusted
+                        filename_pattern = cmorph_dir + '/CMORPH_V1.0_ADJ_0.25deg-DLY_00Z_' + suffix
                         
-                    daily_files = glob.glob(filename_pattern)
+                    daily_files = glob(filename_pattern)
 
                 # loop over each daily file to read the data and assign it into the variable
-                for daily_cmorph_file in daily_files:
+                for day_of_month, daily_cmorph_file in enumerate(daily_files):
                     
                     # read the daily binary data from file, and byte swap if not little endian
                     data = np.fromfile(daily_cmorph_file, 'f')
@@ -319,12 +368,18 @@ def ingest_cmorph_to_netcdf(cmorph_dir,
                     data = np.reshape(data, (1, data_desc['ydef_count'], data_desc['xdef_count']))
 
                     # assign into the appropriate slice for the daily time step
-                    data_variable[days_index, :, :] = data
+                    data_variable[days_index, :, :] = data[:, lat_start : lat_end, lon_start : lon_end]
                     
                     days_index += 1
         
+                    # if we've come to Feb 28th and it's not a leap year then duplicate the Feb 28th values as a faux Feb 29th
+                    if (month == 2) and (day_of_month == 27) and not calendar.isleap(year):
+                        
+                        data_variable[days_index, :, :] = data[:, lat_start : lat_end, lon_start : lon_end]
+                        days_index += 1
+                    
                 # clean up, if necessary
-                if download_files and remove_files:
+                if remove_files:
                     for file in daily_files:
                         os.remove(file)
                     
@@ -359,10 +414,11 @@ def _read_description(work_dir,
     :return: dictionary of data description keys/values
     """
 
+    descriptor_file = os.sep.join((work_dir, 'cmorph_data_descriptor.txt'))
+    
     # download the descriptor file, if necessary
     if download_file:
         
-        descriptor_file = os.sep.join((work_dir, 'cmorph_data_descriptor.txt'))
         file_url = "ftp://filsrv.cicsnc.org/olivier/data_CMORPH_NIDIS/03_PGMS/CMORPH_V1.0_RAW_0.25deg-DLY_00Z.ctl"
         urllib.request.urlretrieve(file_url, descriptor_file)
 
@@ -429,14 +485,12 @@ if __name__ == '__main__':
                             required=True)
         parser.add_argument("--download_files", 
                             help="Download data from FTP, saving files in the CMORPH data directory specified by --cmorph_dir",
-                            type=bool,
-                            default=False, 
-                            required=False)
+                            action="store_true", 
+                            default=False)
         parser.add_argument("--remove_files", 
                             help="Remove downloaded data files from the CMORPH data directory if specified by --download_files",
-                            type=bool,
-                            default=False, 
-                            required=False)
+                            action="store_true", 
+                            default=False)
         parser.add_argument("--obs_type", 
                             help="Observation type, either raw or guage adjusted",
                             choices=['raw', 'adjusted'], 
@@ -452,11 +506,11 @@ if __name__ == '__main__':
         print('\nIngesting CMORPH precipitation dataset')
         print('Result NetCDF:   %s' % args.out_file)
         print('Work directory:  %s' % args.cmorph_dir)
-        print('\n\tDownloading files:   %s' % args.download_files)
+        print('\n\tDownloading files:     %s' % args.download_files)
         print('\tRemoving files:        %s' % args.remove_files)
-        print('\tObservation type:      %s\n' % args.obs_type)
-        print('\tContinental US only:   %s\n' % args.conus_only)
-        print('\n\nRunning...')
+        print('\tObservation type:      %s' % args.obs_type)
+        print('\tContinental US only:   %s' % args.conus_only)
+        print('\nRunning...\n')
         
         # perform the ingest to NetCDF
         ingest_cmorph_to_netcdf(args.cmorph_dir,
@@ -470,7 +524,7 @@ if __name__ == '__main__':
         print('\n\nSuccessfully completed')
         print('\nResult NetCDF:   %s' % args.out_file)
         print('\tObservation type:      %s\n' % args.obs_type)
-        print('\tContinental US only:   %s\n' % args.conus)
+        print('\tContinental US only:   %s\n' % args.conus_only)
 
         # report on the elapsed time
         end_datetime = datetime.now()

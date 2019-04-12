@@ -6,12 +6,13 @@ from datetime import datetime, date, timedelta
 from glob import glob
 import gzip
 import logging
-import netCDF4
-import numpy as np
 import os
 import shutil
 import urllib.request
 import warnings
+
+import netCDF4
+import numpy as np
 from pandas import date_range
 
 # -----------------------------------------------------------------------------------------------------------------------
@@ -96,9 +97,16 @@ def _get_spec_years(start_date,
 
 
 # -----------------------------------------------------------------------------------------------------------------------
+def _get_months(start_date: str,
+                end_date: str):
+    """
 
-def _get_months(start_date,
-                end_date):
+    :param str start_date: expected in "YYYY-mm-dd" format
+    :param str end_date: expected in "YYYY-mm-dd" format
+    :return:
+    """
+
+    # convert strings to datetimes
     start_date_obj = datetime.strptime(start_date, '%Y-%m-%d')
     end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
 
@@ -106,14 +114,15 @@ def _get_months(start_date,
 
 
 # -----------------------------------------------------------------------------------------------------------------------
-def _download_daily_files(destination_dir,
-                          year,
-                          month,
+def _download_daily_files(destination_dir: str,
+                          year: int,
+                          month: int,
                           obs_type='raw'):
     """
-    :param destination_dir:
-    :param year:
-    :param month: 1 == January, ..., 12 == December
+    :param str destination_dir: directory where we should download files
+    :param int year: year for which we'll download all daily files
+    :param int month: 1 == January, ..., 12 == December
+    :param obs_type: "raw" or "adjusted"
     """
 
     # determine which set of days per month we'll use based on if leap year or not
@@ -241,10 +250,10 @@ def _compute_days_full_years(year_initial,
 
 
 # -----------------------------------------------------------------------------------------------------------------------
-def ingest_cmorph_to_netcdf(cmorph_dir,
-                            netcdf_file,
-                            start_date,
-                            end_date,
+def ingest_cmorph_to_netcdf(cmorph_dir: str,
+                            netcdf_file: str,
+                            start_date: str,
+                            end_date: str,
                             obs_type='raw',
                             download_files=True,
                             remove_files=True,
@@ -253,11 +262,17 @@ def ingest_cmorph_to_netcdf(cmorph_dir,
     """
     Ingests CMORPH daily precipitation files into a full period of record file containing daily precipitation values.
 
-    :param cmorph_dir: work directory where CMORPH files are expected to be located, downloaded files will reside here
-    :param netcdf_file: output NetCDF
-    :param data_descriptor_file_name: file name of the data descriptor file in CMORPH directory
+    :param str cmorph_dir: work directory where CMORPH files are expected to be
+        located, downloaded files will reside here
+    :param str netcdf_file: output NetCDF file path
+    :param str start_date: expected in "YYYY-mm-dd" format
+    :param str end_date: expected in "YYYY-mm-dd" format
+    :param obs_type: "raw" or "adjusted"
     :param download_files: if true then download the data descriptor and data files from FTP, overwrites files in CMORPH work directory
     :param remove_files: if files were downloaded then remove them once operations have completed
+    :param conus_only: ingest only data for CONUS
+    :param manual_dates:
+    :return:
     """
 
     # read data description info into a dictionary

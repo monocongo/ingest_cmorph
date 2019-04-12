@@ -15,24 +15,24 @@ import netCDF4
 import numpy as np
 from pandas import date_range
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # set up a basic, global _logger which will write to the console as standard error
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d  %H:%M:%S')
 _logger = logging.getLogger(__name__)
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # ignore warnings
 warnings.simplefilter('ignore', Warning)
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # days of each calendar month, for non-leap and leap years
 __MONTH_DAYS_NONLEAP = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 __MONTH_DAYS_LEAP = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def _find_closest(sorted_values,
                   value,
                   before=False):
@@ -57,7 +57,7 @@ def _find_closest(sorted_values,
     raise ValueError
 
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def _get_years():
     return list(range(2018, 2019))  # we know this, but not portable/reusable
 
@@ -80,7 +80,7 @@ def _get_years():
 #                 years.append(year)
 #
 #     return years
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def _get_spec_years(start_date,
                     end_date):
     start_date_obj = datetime.strptime(start_date, '%Y-%m-%d')
@@ -96,7 +96,7 @@ def _get_spec_years(start_date,
     return dates
 
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def _get_months(start_date: str,
                 end_date: str):
     """
@@ -113,7 +113,7 @@ def _get_months(start_date: str,
     return date_range(start_date_obj, end_date_obj, freq='MS').tolist()
 
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def _download_daily_files(destination_dir: str,
                           year: int,
                           month: int,
@@ -135,30 +135,46 @@ def _download_daily_files(destination_dir: str,
     year_month = str(year) + str(month).zfill(2)
     url_base = 'https://ftp.cpc.ncep.noaa.gov/precip/'  # Changed for updates
     if obs_type == 'raw':
-        url_base += 'CMORPH_V0.x/RAW/0.25deg-DLY_00Z/' + str(year) + '/' + year_month  # changed for CPC FTP
+        url_base += 'CMORPH_V0.x/RAW/0.25deg-DLY_00Z/' + str(year) + '/' + \
+                    year_month  # changed for CPC FTP
     elif obs_type == 'adjusted':
-        url_base += 'CMORPH_V1.0/CRT/0.25deg-DLY_00Z/' + str(year) + '/' + year_month  # Changed for Corrected (CRT)
+        url_base += 'CMORPH_V1.0/CRT/0.25deg-DLY_00Z/' + str(year) + '/' + \
+                    year_month  # Changed for Corrected (CRT)
     else:
         url_base += 'CMORPH_RT/ICDR/0.25deg-DLY_00Z'  # changed for ICDR
-        # START HERE ####################################################################################################
+        # START HERE  ##########################################################
     # list of files we'll return
     files = []
 
     # list of dates for ICDR data
-    # year_month_day_icdr = ['20181101', '20181102','20181103', '20181104','20181105', '20181106','20181107', '20181108','20181109', '20181110','20181111', '20181112','20181113', '20181114','20181115', '20181116','20181117', '20181118','20181119', '20181120','20181121', '20181122','20181123', '20181124','20181125', '20181126','20181127', '20181128','20181129', '20181130','20181201', '20181202','20181203', '20181204','20181205', '20181206','20181207', '20181208','20181209', '20181210','20181211', '20181212','20181213', '20181214','20181215', '20181216','20181217', '20181218','20181219', '20181220','20181221', '20181222','20181223', '20181224','20181225', '20181226','20181227', '20181228','20181229', '20181230', '20181231' ]
+    # year_month_day_icdr = ['20181101', '20181102','20181103', '20181104',
+    #                        '20181105', '20181106','20181107', '20181108',
+    #                        '20181109', '20181110','20181111', '20181112',
+    #                        '20181113', '20181114','20181115', '20181116',
+    #                        '20181117', '20181118','20181119', '20181120',
+    #                        '20181121', '20181122','20181123', '20181124',
+    #                        '20181125', '20181126','20181127', '20181128',
+    #                        '20181129', '20181130','20181201', '20181202',
+    #                        '20181203', '20181204','20181205', '20181206',
+    #                        '20181207', '20181208','20181209', '20181210',
+    #                        '20181211', '20181212','20181213', '20181214',
+    #                        '20181215', '20181216','20181217', '20181218',
+    #                        '20181219', '20181220','20181221', '20181222',
+    #                        '20181223', '20181224','20181225', '20181226',
+    #                        '20181227', '20181228','20181229', '20181230',
+    #                        '20181231' ]
 
     for day in range(days_in_month[month - 1]):
         # build the file name, URL, and local file name
         year_month_day = year_month + str(day + 1).zfill(2)
         if obs_type == 'raw':
             filename_unzipped = 'CMORPH_V0.x_RAW_0.25deg-DLY_00Z_' + year_month_day
-            # filename = 'CMORPH_V1.0_RAW_0.25deg-DLY_00Z_' + year_month_day # Changed for ICDR
         elif obs_type == 'adjusted':  # CRT
-            #    filename_unzipped = 'CMORPH_V1.0_ADJ_0.25deg-DLY_00Z_' + year_month_day # Changed for CRT
             filename_unzipped = 'CMORPH_V1.0_ADJ_0.25deg-DLY_00Z_' + year_month_day  # Changed for CRT
         else:
             filename_unzipped = 'CMORPH_V0.x_ADJ_0.25deg-DLY_00Z_' + year_month_day  # Changed for ICDR
-        if obs_type == 'raw':  # Alec - V0.x also uses .gz and year < 2020:   # the raw files use GZIP through 2003
+        if obs_type == 'raw':  # V0.x also uses .gz and year < 2020:
+            # the raw files use GZIP through 2003
             zip_extension = '.gz'  # for RAW
         elif obs_type == 'adjusted':
             zip_extension = '.bz2'  # for CRT
@@ -179,20 +195,21 @@ def _download_daily_files(destination_dir: str,
 
         # decompress the zipped file
         #    if (year >= 2004) or (obs_type == 'adjusted'):
-        if (obs_type == 'adjusted'):  # use for V0.x RAW, which uses gzip compression
+        if obs_type == 'adjusted':  # use for V0.x RAW, which uses gzip compression
             # use BZ2 decompression for files after 2003
-            with bz2.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
+            with bz2.open(local_filename_zipped, 'r') \
+                    as f_in, open(local_filename_unzipped, 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
-        elif (obs_type == 'raw'):
+        elif obs_type == 'raw':
             # use GZIP decompression for raw files before 2004
-            with gzip.open(local_filename_zipped, 'r') as f_in, open(local_filename_unzipped, 'wb') as f_out:
+            with gzip.open(local_filename_zipped, 'r') \
+                    as f_in, open(local_filename_unzipped, 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
         else:
             local_filename_unzipped = local_filename_zipped
 
         # append to our list of data files
         files.append(local_filename_unzipped)
-        # files.append(local_filename)
 
         # clean up the downloaded zip file
         # os.remove(local_filename_zipped)
@@ -200,29 +217,32 @@ def _download_daily_files(destination_dir: str,
     return files
 
 
-# -----------------------------------------------------------------------------------------------------------------------
-def _compute_days_full_years(year_initial,
-                             year_final,
+# ------------------------------------------------------------------------------
+def _compute_days_full_years(year_initial: int,
+                             year_final: int,
                              year_since=1900,
                              month_initial=1,
                              day_initial=1,
                              month_final=12,
                              day_final=31):
-    '''
-    Computes the "number of days" equivalent for regular, incremental daily time steps given an initial year.
-    Useful when using "days since <year_since>" as the time units within a NetCDF dataset. The resulting list
-    of days will represent the range of full years, i.e. from January 1st of the initial year through December 31st
-    of the final year.
+    """
+    Computes the "number of days" equivalent for regular, incremental daily time
+    steps given an initial year. Useful when using "days since <year_since>" as
+    the time units within a NetCDF dataset. The resulting list of days will
+    represent the range of full years, i.e. from January 1st of the initial year
+    through December 31st of the final year.
 
-    :param year_initial: the initial year from which the day values should start, i.e. the first value in the output
-                        array will correspond to the number of days between January 1st of this initial year and January
-                        1st of the units since year
+    :param year_initial: the initial year from which the day values should start,
+        i.e. the first value in the output array will correspond to the number
+        of days between January 1st of this initial year and January 1st of the
+        units since year
     :param year_final: the final year through which the result values are computed
-    :param year_since: the start year from which the day values are incremented, with result time steps measured
-                        in days since January 1st of this year
-    :return: an array of time step increments, measured in days since midnight of January 1st of the units' "since year"
+    :param year_since: the start year from which the day values are incremented,
+        with result time steps measured in days since January 1st of this year
+    :return: an array of time step increments, measured in days since midnight
+        of January 1st of the units' "since year"
     :rtype: ndarray of ints
-    '''
+    """
 
     # arguments validation
     if year_initial < year_since:
@@ -231,25 +251,27 @@ def _compute_days_full_years(year_initial,
         raise ValueError('Invalid year arguments, final data year is before the initial data year')
 
     # datetime objects from the years
-    date_initial = datetime(year_initial, month_initial,
-                            day_initial)  # assumes start at beginning of year (issue with partial records like Real-time ICDR)
+    date_initial = datetime(year_initial, month_initial, day_initial)  # assumes start at beginning of year (issue with partial records like Real-time ICDR)
     date_final = datetime(year_final, month_final,
                           day_final)  # assumes end of year, issue with partial records like real-time ICDR
     date_since = datetime(year_since, 1, 1)
 
-    # starting day value, i.e. first number of days since the time units' "since year"
+    # starting day value, i.e. first number of days
+    # since the time units' "since year"
     days_initial = (date_initial - date_since).days
 
-    # total number of days between Jan 1st of the initial year and Dec 31st of the final year
+    # total number of days between Jan 1st of the initial
+    # year and Dec 31st of the final year
     total_days = (date_final - date_initial).days + 1
 
-    # list of day values starting at the initial number of days since the time units' "since year"
+    # list of day values starting at the initial number
+    # of days since the time units' "since year"
     days_since = range(days_initial, days_initial + total_days)
 
     return np.array(days_since)
 
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def ingest_cmorph_to_netcdf(cmorph_dir: str,
                             netcdf_file: str,
                             start_date: str,
@@ -293,6 +315,7 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
 
     # slice out the CONUS lat/lon values, if called for
     if conus_only:
+
         # find lat/lon indices corresponding to CONUS bounds
         lat_start = _find_closest(lat_values, 23.0)
         lat_end = _find_closest(lat_values, 50.0) + 1
@@ -303,20 +326,12 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
         lat_values = lat_values[lat_start: lat_end]
         lon_values = lon_values[lon_start: lon_end]
 
-    if manual_dates:
-
-        # get range of dates to cover
-        dates = _get_months(start_date, end_date)
-
-    else:
-        # get the range of years covered
-        years = _get_years()
-
     units_since_year = 1900
 
     # get the lat/lon range limits for the full grid
     # create a corresponding NetCDF
-    # The opening and closing of this file could be causing I/O errors - Move to __main__ function, keep open
+    # The opening and closing of this file could be causing I/O errors -
+    # Move to __main__ function, keep open
     with netCDF4.Dataset(netcdf_file, 'w') as output_dataset:
 
         # create the time, x, and y dimensions
@@ -343,6 +358,10 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
 
         # set the coordinate variable values
         if manual_dates:
+
+            # get range of dates to cover
+            dates = _get_months(start_date, end_date)
+
             time_variable[:] = _compute_days_full_years(dates[0].year,
                                                         dates[len(dates) - 1].year,
                                                         units_since_year,
@@ -351,6 +370,9 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
                                                         dates[len(dates) - 1].month,
                                                         dates[len(dates) - 1].day)
         else:
+            # get the range of years covered
+            years = _get_years()
+
             time_variable[:] = _compute_days_full_years(data_desc['start_date'].year,
                                                         years[-1],
                                                         year_since=units_since_year)
@@ -358,7 +380,8 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
         lat_variable[:] = np.array(lat_values, 'f4')
         lon_variable[:] = np.array(lon_values, 'f4')
 
-        # read the variable data from the CMORPH file, mask and reshape accordingly, and then assign into the variable
+        # read the variable data from the CMORPH file, mask and reshape
+        # accordingly, and then assign into the variable
         data_variable = output_dataset.createVariable('prcp',
                                                       'f4',
                                                       ('time', 'lat', 'lon',),
@@ -368,15 +391,18 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
         data_variable.long_name = 'Precipitation'
         data_variable.description = data_desc['title']
 
-        # loop over each year/month, reading binary data from CMORPH files and adding into the NetCDF variable
-        # NEED TO MAKE THIS IF AND ONLY UPDATE WITH MANUAL_DATES OPTION
+        # loop over each year/month, reading binary data from CMORPH files
+        # and adding into the NetCDF variable
+        # TODO NEED TO MAKE THIS IF AND ONLY UPDATE WITH MANUAL_DATES OPTION
         days_index = 0
 
         # Added for manual dates
         if manual_dates:
             for datee in dates:
                 if download_files:
-                    daily_files = _download_daily_files(cmorph_dir, datee.year, datee.month, obs_type)
+                    daily_files = _download_daily_files(cmorph_dir,
+                                                        datee.year,
+                                                        datee.month, obs_type)
                 else:
                     suffix = str(datee.year) + str(datee.month).zfill(2) + '*'
                     if obs_type == 'raw':
@@ -392,7 +418,8 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
                 for daily_cmorph_file in daily_files:
                     if not obs_type == 'icdr':
 
-                        # read the daily binary data from file, and byte swap if not little endian
+                        # read the daily binary data from file,
+                        # and byte swap if not little endian
                         data = np.fromfile(daily_cmorph_file, 'f')
                         if not data_desc['little_endian']:
                             data = data.byteswap()
@@ -487,9 +514,8 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
                             #    _logger.info('lon_start: %s', lon_start)
                             #    _logger.info('lon_end: %s', lon_end)
                             #   data_variable[days_index, :, :] = data[:, lat_start : lat_end, lon_start : lon_end]
-                            data_variable[days_index, :, :] = data[:, : lat_len,
-                                                              : lon_len]  # tweaked to use index values
-
+                            data_variable[days_index, :, :] = \
+                                data[:, : lat_len, : lon_len]  # tweaked to use index values
                             days_index += 1
                         else:
                             # read data from ICDR netcdf file
@@ -513,8 +539,8 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
                             #    _logger.info('lon_start: %s', lon_start)
                             #    _logger.info('lon_end: %s', lon_end)
                             #   data_variable[days_index, :, :] = data[:, lat_start : lat_end, lon_start : lon_end]
-                            data_variable[days_index, :, :] = data[:, : lat_len,
-                                                              : lon_len]  # tweaked to use index values
+                            data_variable[days_index, :, :] = \
+                                data[:, : lat_len, : lon_len]  # tweaked to use index values
 
                             days_index += 1
 
@@ -524,7 +550,7 @@ def ingest_cmorph_to_netcdf(cmorph_dir: str,
                             os.remove(file)
 
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def _frange(start, stop, step):
     i = start
     while i < stop:
@@ -532,7 +558,7 @@ def _frange(start, stop, step):
         i += step
 
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def _read_description(work_dir,
                       download_file,
                       remove_file, obs_type='raw'):
@@ -566,7 +592,7 @@ def _read_description(work_dir,
 
     if download_file:
         if obs_type == 'raw':
-            file_url = "https://ftp.cpc.ncep.noaa.gov/precip/CMORPH_V1.0/CTL/CMORPH_V1.0_RAW_0.25deg-DLY_00Z.ctl"  # Changed from Oliiver FTP James used to have
+            file_url = "https://ftp.cpc.ncep.noaa.gov/precip/CMORPH_V1.0/CTL/CMORPH_V1.0_RAW_0.25deg-DLY_00Z.ctl"  # Changed from Olivier FTP James used to have
             urllib.request.urlretrieve(file_url, descriptor_file)
         else:
             file_url = "https://ftp.cpc.ncep.noaa.gov/precip/CMORPH_V1.0/CTL/CMORPH_V1.0_CRT_0.25deg-3HLY.ctl"  # switch to daily?
@@ -611,20 +637,19 @@ def _read_description(work_dir,
     return data_dict
 
 
-# -----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 if __name__ == '__main__':
-    """
-    This module is used to perform ingest of binary CMORPH datasets to NetCDF.
 
-    Example command line usage for reading all daily files for all months into a single NetCDF file containing gauge 
-    adjusted daily precipitation for the full period of record (all months), with all files downloaded from FTP and 
-    left in place:
-
-    $ python -u ingest_cmorph.py --cmorph_dir /data/cmorph/raw \
-                                 --out_file C:/home/data/cmorph_file.nc \
-                                 --download --obs_type adjusted
-
-    """
+    # This module is used to perform ingest of binary CMORPH datasets to NetCDF.
+    #
+    # Example command line usage for reading all daily files for all months into
+    # a single NetCDF file containing gauge adjusted daily precipitation for the
+    # full period of record (all months), with all files downloaded from FTP and
+    # left in place:
+    #
+    # $ python -u ingest_cmorph.py --cmorph_dir /data/cmorph/raw \
+    #                              --out_file C:/home/data/cmorph_file.nc \
+    #                              --download --obs_type adjusted
 
     try:
 
@@ -635,17 +660,21 @@ if __name__ == '__main__':
         # parse the command line arguments
         parser = argparse.ArgumentParser()
         parser.add_argument("--cmorph_dir",
-                            help="Directory containing daily binary CMORPH data files for a single month",
+                            help="Directory containing daily binary CMORPH "
+                                 "data files for a single month",
                             required=True)
         parser.add_argument("--out_file",
-                            help="NetCDF output file containing variables read from the input data",
+                            help="NetCDF output file containing variables read "
+                                 "from the input data",
                             required=True)
         parser.add_argument("--download",
-                            help="Download data from FTP, saving files in the CMORPH data directory specified by --cmorph_dir",
+                            help="Download data from FTP, saving files in the "
+                                 "CMORPH data directory specified by --cmorph_dir",
                             action="store_true",
                             default=False)
         parser.add_argument("--clean_up",
-                            help="Remove downloaded data files from the CMORPH data directory if specified by --download",
+                            help="Remove downloaded data files from the CMORPH "
+                                 "data directory if specified by --download",
                             action="store_true",
                             default=False)
         parser.add_argument("--obs_type",
@@ -654,19 +683,25 @@ if __name__ == '__main__':
                             default='adjusted',
                             required=False)
         parser.add_argument("--conus",
-                            help="Use only continental US data (-65 through -128 degrees east, 23 through 60 degrees north)",
+                            help="Use only continental US data (-65 through "
+                                 "-128 degrees east, 23 through 60 degrees north)",
                             action='store_true',
                             required=False)
         # Added to allow user specified start-/end-dates for ICDR real-time data and specific data periods
         parser.add_argument("--manual_dates",
-                            help="Uses user specified start and end date arguments (--start_date & --end_date respectively)",
+                            help="Uses user specified start and end date "
+                                 "arguments (--start_date & --end_date respectively)",
                             action="store_true",
                             default=False)
         parser.add_argument("--start_date",
-                            help="Start date (YYYY-MM-DD format) for data being downloaded if not downloading a period of record starting on Jan. 1, 1998",
+                            help="Start date (YYYY-MM-DD format) for data being "
+                                 "downloaded if not downloading a period of "
+                                 "record starting on Jan. 1, 1998",
                             required=False)
         parser.add_argument("--end_date",
-                            help="End date (YYYY-MM-DD format) for data being downloaded if not downloading a period of record ending on Dec. 31, 2017",
+                            help="End date (YYYY-MM-DD format) for data being "
+                                 "downloaded if not downloading a period of "
+                                 "record ending on Dec. 31, 2017",
                             required=False)
         args = parser.parse_args()
 
@@ -691,7 +726,8 @@ if __name__ == '__main__':
                                 conus_only=args.conus,
                                 manual_dates=args.manual_dates)
 
-        # display the info in case the above info has scrolled past due to output from the ingest process itself
+        # display the info in case the above info has scrolled
+        # past due to output from the ingest process itself
         print('\nSuccessfully completed')
         print('\nResult NetCDF:   %s\n' % args.out_file)
         print('\tObservation type:      %s' % args.obs_type)
